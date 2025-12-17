@@ -30,9 +30,12 @@ export async function getMyProfile(uid: string, email: string | null): Promise<F
 
     const data = snap.data() as any;
 
+    // Use stored email from Firestore if the caller didn't provide one
+    const resolvedEmail = email ?? data.email ?? null;
+
     return {
         id: uid,
-        name: (data.name ?? email ?? "Anonymous") as string,
+        name: (data.name ?? resolvedEmail ?? "Anonymous") as string,
         city: (data.city ?? "") as string,
         interests: Array.isArray(data.interests) ? data.interests : [],
         trustedContacts: Array.isArray(data.trustedContacts) ? data.trustedContacts : [],

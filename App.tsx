@@ -63,6 +63,7 @@ const App: React.FC = () => {
       if (!fbUser) {
         setUser(null);
         setMatches([]); // Clear matches on logout
+        setMessages({}); // Clear messages on logout
         return;
       }
 
@@ -99,14 +100,21 @@ const App: React.FC = () => {
         setMatches(realMatches);
 
         // Fetch profiles for people we matched with (so we have their name/avatar)
-        const newProfiles: Record<string, PotentialFriend> = { ...otherUserProfiles };
+        const profilesToFetch: string[] = [];
 
         for (const m of realMatches) {
           const otherId = m.users.find(u => u !== fbUser.uid);
-          if (otherId && !newProfiles[otherId]) {
-            // Reuse getMyProfile to fetch other user's data
+          if (otherId) {
+            profilesToFetch.push(otherId);
+          }
+        }
+
+        // Fetch all profiles in parallel
+        const fetchedProfiles: Record<string, PotentialFriend> = {};
+        await Promise.all(
+          profilesToFetch.map(async (otherId) => {
             const p = await getMyProfile(otherId, null);
-            newProfiles[otherId] = {
+            fetchedProfiles[otherId] = {
               id: p.id,
               name: p.name,
               city: p.city,
@@ -115,9 +123,11 @@ const App: React.FC = () => {
               bio: p.bio,
               distance: 0
             };
-          }
-        }
-        setOtherUserProfiles(newProfiles);
+          })
+        );
+
+        // Use functional update to avoid stale closure
+        setOtherUserProfiles(prev => ({ ...prev, ...fetchedProfiles }));
       });
 
       loadSeedData(); // Only loads meetups now
@@ -217,8 +227,8 @@ const App: React.FC = () => {
         // but we can show a localized alert or effect here.
         alert(`It's a match with ${currentProfile.name}!`);
 
-        // Add basic system message for the new match
-        await sendMessage(match.id, 'system', `You matched with ${currentProfile.name}!`);
+        // Don't store a system message here - both users would see the same name.
+        // The match banner is generated client-side based on who the other user is.
       }
     } catch (error) {
       console.error("Swipe failed:", error);
@@ -455,6 +465,23 @@ const App: React.FC = () => {
 
               {/* Message List */}
               <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                {/* Client-side match banner - shows correct name for each user */}
+                {activeMatchId && (() => {
+                  const activeMatch = matches.find(m => m.id === activeMatchId);
+                  if (activeMatch) {
+                    const otherUserId = activeMatch.users.find(u => u !== user?.id);
+                    const otherUserProfile = otherUserId ? otherUserProfiles[otherUserId] : null;
+                    const otherUserName = otherUserProfile?.name || otherUserId || "your friend";
+                    return (
+                      <div className="flex justify-center">
+                        <div className="bg-stone-200 text-stone-600 text-xs px-3 py-1 rounded-full text-center">
+                          You matched with {otherUserName}!
+                        </div>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
                 {(messages[activeMatchId] || []).map(msg => {
                   // Render Meetup Card if this message is linked to a meetup
                   if (msg.meetupId) {
