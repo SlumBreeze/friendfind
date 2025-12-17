@@ -1,0 +1,50 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Check if user is logged in
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper: Check if the current user is listed in the 'users' array of the parent Match document
+    // This requires a get() call which counts as 1 read operation
+    function isMatchParticipant(matchId) {
+      let matchData = get(/databases/$(database)/documents/matches/$(matchId)).data;
+      return request.auth.uid in matchData.users;
+    }
+
+    // USERS collection
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // MATCHES collection
+    match /matches/{matchId} {
+      // Allow access if user is in the 'users' array of the requested match
+      allow read: if isAuthenticated() && request.auth.uid in resource.data.users;
+      allow create: if isAuthenticated(); // MVP: Allow creation (Server should handle ideally)
+      allow update: if isAuthenticated() && request.auth.uid in resource.data.users;
+      
+      // MESSAGES subcollection
+      match /messages/{messageId} {
+        // Read: Must be a participant of the parent match
+        allow read: if isAuthenticated() && isMatchParticipant(matchId);
+        
+        // Create: Must be a participant AND senderId must match auth user (Anti-spoofing)
+        allow create: if isAuthenticated() && 
+                      isMatchParticipant(matchId) && 
+                      request.resource.data.senderId == request.auth.uid;
+                      
+        // Update/Delete: Must be a participant
+        allow update, delete: if isAuthenticated() && isMatchParticipant(matchId);
+      }
+
+      // MEETUPS subcollection
+      match /meetups/{meetupId} {
+        allow read, write: if isAuthenticated() && isMatchParticipant(matchId);
+      }
+    }
+  }
+}

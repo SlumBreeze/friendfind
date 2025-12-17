@@ -1,0 +1,5 @@
+{
+  "name": "FriendFind",
+  "description": "A mobile-first discovery app for finding platonic friends with shared interests. Features secure matching, in-app chat, meetup planning, and safety alerts.",
+  "requestFramePermissions": []
+}
