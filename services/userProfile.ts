@@ -7,6 +7,8 @@ export type FirestoreUserProfile = {
     city: string;
     interests: string[];
     trustedContacts: string[];
+    avatar?: string;
+    bio?: string;
 };
 
 export async function getMyProfile(uid: string, email: string | null): Promise<FirestoreUserProfile> {
@@ -21,6 +23,8 @@ export async function getMyProfile(uid: string, email: string | null): Promise<F
             city: "",
             interests: [],
             trustedContacts: [],
+            avatar: undefined,
+            bio: undefined,
         };
     }
 
@@ -32,5 +36,7 @@ export async function getMyProfile(uid: string, email: string | null): Promise<F
         city: (data.city ?? "") as string,
         interests: Array.isArray(data.interests) ? data.interests : [],
         trustedContacts: Array.isArray(data.trustedContacts) ? data.trustedContacts : [],
+        avatar: data.avatar ?? undefined,
+        bio: data.bio ?? undefined,
     };
 }

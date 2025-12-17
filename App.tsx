@@ -48,6 +48,8 @@ const App: React.FC = () => {
   const [profileCity, setProfileCity] = useState("");
   const [profileInterests, setProfileInterests] = useState("");
   const [profileContacts, setProfileContacts] = useState("");
+  const [profileAvatar, setProfileAvatar] = useState("");
+  const [profileBio, setProfileBio] = useState("");
   const [profileSaving, setProfileSaving] = useState(false);
 
   // --- INIT SEED DATA (for matches, messages, etc. - NOT potential friends) ---
@@ -113,6 +115,8 @@ const App: React.FC = () => {
     setProfileCity(user.city ?? "");
     setProfileInterests((user.interests ?? []).join(", "));
     setProfileContacts((user.trustedContacts ?? []).join(", "));
+    setProfileAvatar((user as any).avatar ?? "");
+    setProfileBio((user as any).bio ?? "");
   }, [user]);
 
   // Save profile handler
@@ -136,6 +140,8 @@ const App: React.FC = () => {
         city: profileCity.trim(),
         interests,
         trustedContacts,
+        avatar: profileAvatar.trim() || undefined,
+        bio: profileBio.trim() || undefined,
       });
 
       // Update local state so UI refreshes immediately
@@ -144,6 +150,8 @@ const App: React.FC = () => {
         city: profileCity.trim(),
         interests,
         trustedContacts,
+        avatar: profileAvatar.trim() || undefined,
+        bio: profileBio.trim() || undefined,
       } as any) : prev);
     } finally {
       setProfileSaving(false);
@@ -631,11 +639,22 @@ const App: React.FC = () => {
           {view === ViewState.PROFILE && (
             <div className="p-6">
               <div className="flex flex-col items-center mb-8">
-                <div className="w-24 h-24 rounded-full bg-primary-400 flex items-center justify-center border-4 border-white shadow-lg mb-4">
-                  <UserIcon className="w-12 h-12 text-stone-900" />
-                </div>
+                {(user as any)?.avatar ? (
+                  <img
+                    src={(user as any).avatar}
+                    alt="Profile"
+                    className="w-24 h-24 rounded-full object-cover border-4 border-white shadow-lg mb-4"
+                  />
+                ) : (
+                  <div className="w-24 h-24 rounded-full bg-primary-400 flex items-center justify-center border-4 border-white shadow-lg mb-4">
+                    <UserIcon className="w-12 h-12 text-stone-900" />
+                  </div>
+                )}
                 <h2 className="text-2xl font-bold text-stone-900">{auth.currentUser?.email ?? "Anonymous"}</h2>
                 <p className="text-stone-500">{user?.city ?? "Your City"}</p>
+                {(user as any)?.bio && (
+                  <p className="text-stone-600 text-sm text-center mt-2 max-w-xs">{(user as any).bio}</p>
+                )}
               </div>
 
               <div className="space-y-6">
@@ -660,6 +679,30 @@ const App: React.FC = () => {
                         value={profileInterests}
                         onChange={(e) => setProfileInterests(e.target.value)}
                         placeholder="e.g. guitar, hiking, coding"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-sm font-medium text-stone-600">Avatar URL</label>
+                      <input
+                        className="w-full mt-1 p-3 bg-stone-50 rounded-xl border border-stone-200"
+                        value={profileAvatar}
+                        onChange={(e) => setProfileAvatar(e.target.value)}
+                        placeholder="https://example.com/your-photo.jpg"
+                      />
+                      <p className="text-xs text-stone-500 mt-1">
+                        Paste a direct link to an image (e.g. from Imgur, Gravatar, etc.)
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="text-sm font-medium text-stone-600">Bio</label>
+                      <textarea
+                        className="w-full mt-1 p-3 bg-stone-50 rounded-xl border border-stone-200 resize-none"
+                        rows={3}
+                        value={profileBio}
+                        onChange={(e) => setProfileBio(e.target.value)}
+                        placeholder="Tell others a bit about yourself..."
                       />
                     </div>
 

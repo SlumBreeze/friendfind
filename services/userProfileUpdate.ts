@@ -8,6 +8,8 @@ export async function updateMyProfile(
         interests?: string[];
         trustedContacts?: string[];
         name?: string;
+        avatar?: string;
+        bio?: string;
     }
 ): Promise<void> {
     const ref = doc(db, "users", uid);
