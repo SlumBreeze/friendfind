@@ -1,32 +1,33 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>FriendFind</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            fontFamily: {
-              sans: ['Inter', 'sans-serif'],
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FriendFind</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+          },
+          colors: {
+            primary: {
+              400: '#FACC15', // Yellow-400
+              500: '#EAB308', // Yellow-500
             },
-            colors: {
-              primary: {
-                400: '#FACC15', // Yellow-400
-                500: '#EAB308', // Yellow-500
-              },
-              accent: {
-                500: '#F43F5E', // Rose-500
-                600: '#E11D48', // Rose-600
-              }
+            accent: {
+              500: '#F43F5E', // Rose-500
+              600: '#E11D48', // Rose-600
             }
           }
         }
       }
-    </script>
+    }
+  </script>
   <script type="importmap">
 {
   "imports": {
@@ -38,8 +39,10 @@
 }
 </script>
 </head>
-  <body class="bg-stone-50 text-stone-900 antialiased overflow-hidden selection:bg-primary-400 selection:text-black">
-    <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
-  </body>
+
+<body class="bg-stone-50 text-stone-900 antialiased selection:bg-primary-400 selection:text-black">
+  <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+
 </html>

@@ -4,6 +4,7 @@ import { logOut } from './services/auth';
 import { auth } from './services/firebase';
 import { getMyProfile } from './services/userProfile';
 import { updateMyProfile } from './services/userProfileUpdate';
+import { getDiscoverUsers } from './services/discovery';
 import { ViewState, User, PotentialFriend, Match, Message, Meetup } from './types';
 import { Button } from './components/Button';
 import {
@@ -12,7 +13,6 @@ import {
 } from './components/Icons';
 import { generateIcebreakers, composeSafetyMessage } from './services/geminiService';
 import {
-  SEED_POTENTIAL_FRIENDS,
   SEED_MATCHES,
   SEED_MATCHED_USERS_PROFILES,
   SEED_MESSAGES,
@@ -50,16 +50,14 @@ const App: React.FC = () => {
   const [profileContacts, setProfileContacts] = useState("");
   const [profileSaving, setProfileSaving] = useState(false);
 
-  // --- INIT SEED DATA (for potential friends, matches, etc.) ---
+  // --- INIT SEED DATA (for matches, messages, etc. - NOT potential friends) ---
   const loadSeedData = () => {
-    setPotentialFriends(SEED_POTENTIAL_FRIENDS);
     setMatches(SEED_MATCHES);
     setMessages(SEED_MESSAGES);
     setMeetups(SEED_MEETUPS);
 
     // Index extra profiles for quick lookup
     const profiles: Record<string, PotentialFriend> = {};
-    SEED_POTENTIAL_FRIENDS.forEach(p => profiles[p.id] = p);
     SEED_MATCHED_USERS_PROFILES.forEach(p => profiles[p.id] = p);
     setOtherUserProfiles(profiles);
   };
@@ -83,7 +81,21 @@ const App: React.FC = () => {
         trustedContacts: profile.trustedContacts,
       } as any);
 
-      // Load seed data for other parts (potential friends, matches, etc.)
+      // Load discovered users from Firestore (same city)
+      const discovered = await getDiscoverUsers(fbUser.uid, profile.city);
+      setPotentialFriends(
+        discovered.map((p) => ({
+          id: p.id,
+          name: p.name,
+          city: p.city,
+          interests: p.interests,
+          bio: p.bio ?? "No bio yet.",
+          distance: 0,
+          avatar: p.avatar ?? "https://via.placeholder.com/600x800",
+        })) as any
+      );
+
+      // Load seed data for other parts (matches, messages, etc.)
       loadSeedData();
     });
 
