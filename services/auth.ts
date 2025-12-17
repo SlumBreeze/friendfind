@@ -1,9 +1,19 @@
 // services/auth.ts
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, User } from "firebase/auth";
-import { auth } from "./firebase";
+import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { auth, db } from "./firebase";
 
 export async function signUp(email: string, password: string): Promise<User> {
     const cred = await createUserWithEmailAndPassword(auth, email, password);
+
+    await setDoc(doc(db, "users", cred.user.uid), {
+        email: cred.user.email,
+        city: "",
+        interests: [],
+        trustedContacts: [],
+        createdAt: serverTimestamp(),
+    });
+
     return cred.user;
 }
 

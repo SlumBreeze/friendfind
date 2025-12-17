@@ -1,5 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { onAuthStateChanged } from 'firebase/auth';
 import { logOut } from './services/auth';
+import { auth } from './services/firebase';
+import { getMyProfile } from './services/userProfile';
+import { updateMyProfile } from './services/userProfileUpdate';
 import { ViewState, User, PotentialFriend, Match, Message, Meetup } from './types';
 import { Button } from './components/Button';
 import {
@@ -8,7 +12,6 @@ import {
 } from './components/Icons';
 import { generateIcebreakers, composeSafetyMessage } from './services/geminiService';
 import {
-  SEED_CURRENT_USER,
   SEED_POTENTIAL_FRIENDS,
   SEED_MATCHES,
   SEED_MATCHED_USERS_PROFILES,
@@ -16,6 +19,7 @@ import {
   SEED_MEETUPS
 } from './services/seedData';
 import AuthGate from './components/AuthGate';
+import LogoutButton from './components/LogoutButton';
 
 const App: React.FC = () => {
   // --- APP STATE ---
@@ -40,9 +44,14 @@ const App: React.FC = () => {
   const [showSafetyModal, setShowSafetyModal] = useState(false);
   const [alertStatus, setAlertStatus] = useState<'idle' | 'sending' | 'sent'>('idle');
 
-  // --- INIT DATA ---
+  // Profile Form State
+  const [profileCity, setProfileCity] = useState("");
+  const [profileInterests, setProfileInterests] = useState("");
+  const [profileContacts, setProfileContacts] = useState("");
+  const [profileSaving, setProfileSaving] = useState(false);
+
+  // --- INIT SEED DATA (for potential friends, matches, etc.) ---
   const loadSeedData = () => {
-    setUser(SEED_CURRENT_USER);
     setPotentialFriends(SEED_POTENTIAL_FRIENDS);
     setMatches(SEED_MATCHES);
     setMessages(SEED_MESSAGES);
@@ -55,14 +64,78 @@ const App: React.FC = () => {
     setOtherUserProfiles(profiles);
   };
 
-  // --- LOAD DATA ON MOUNT ---
+  // --- LOAD USER PROFILE FROM FIRESTORE ---
   useEffect(() => {
-    loadSeedData();
+    const unsub = onAuthStateChanged(auth, async (fbUser) => {
+      if (!fbUser) {
+        setUser(null);
+        return;
+      }
+
+      const profile = await getMyProfile(fbUser.uid, fbUser.email);
+
+      // This shape must match your existing `User` type usage
+      setUser({
+        id: profile.id,
+        name: profile.name,
+        city: profile.city,
+        interests: profile.interests,
+        trustedContacts: profile.trustedContacts,
+      } as any);
+
+      // Load seed data for other parts (potential friends, matches, etc.)
+      loadSeedData();
+    });
+
+    return () => unsub();
   }, []);
 
   // --- HELPERS ---
   const handleLogout = async () => {
     await logOut();
+  };
+
+  // Fill profile form when user loads
+  useEffect(() => {
+    if (!user) return;
+    setProfileCity(user.city ?? "");
+    setProfileInterests((user.interests ?? []).join(", "));
+    setProfileContacts((user.trustedContacts ?? []).join(", "));
+  }, [user]);
+
+  // Save profile handler
+  const handleSaveProfile = async () => {
+    const fbUser = auth.currentUser;
+    if (!fbUser) return;
+
+    const interests = profileInterests
+      .split(",")
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    const trustedContacts = profileContacts
+      .split(",")
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    setProfileSaving(true);
+    try {
+      await updateMyProfile(fbUser.uid, {
+        city: profileCity.trim(),
+        interests,
+        trustedContacts,
+      });
+
+      // Update local state so UI refreshes immediately
+      setUser(prev => prev ? ({
+        ...prev,
+        city: profileCity.trim(),
+        interests,
+        trustedContacts,
+      } as any) : prev);
+    } finally {
+      setProfileSaving(false);
+    }
   };
 
   const handleSwipe = (direction: 'left' | 'right') => {
@@ -546,12 +619,54 @@ const App: React.FC = () => {
           {view === ViewState.PROFILE && (
             <div className="p-6">
               <div className="flex flex-col items-center mb-8">
-                <img src={user?.avatar} alt="Me" className="w-24 h-24 rounded-full object-cover border-4 border-white shadow-lg mb-4" />
-                <h2 className="text-2xl font-bold text-stone-900">{user?.name}</h2>
-                <p className="text-stone-500">{user?.city}</p>
+                <div className="w-24 h-24 rounded-full bg-primary-400 flex items-center justify-center border-4 border-white shadow-lg mb-4">
+                  <UserIcon className="w-12 h-12 text-stone-900" />
+                </div>
+                <h2 className="text-2xl font-bold text-stone-900">{auth.currentUser?.email ?? "Anonymous"}</h2>
+                <p className="text-stone-500">{user?.city ?? "Your City"}</p>
               </div>
 
               <div className="space-y-6">
+                <div className="bg-white p-4 rounded-2xl shadow-sm border border-stone-100">
+                  <h3 className="font-semibold mb-3">Edit Profile</h3>
+
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-sm font-medium text-stone-600">City</label>
+                      <input
+                        className="w-full mt-1 p-3 bg-stone-50 rounded-xl border border-stone-200"
+                        value={profileCity}
+                        onChange={(e) => setProfileCity(e.target.value)}
+                        placeholder="e.g. Charlotte, NC"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-sm font-medium text-stone-600">Interests (comma separated)</label>
+                      <input
+                        className="w-full mt-1 p-3 bg-stone-50 rounded-xl border border-stone-200"
+                        value={profileInterests}
+                        onChange={(e) => setProfileInterests(e.target.value)}
+                        placeholder="e.g. guitar, hiking, coding"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-sm font-medium text-stone-600">Trusted Contacts (comma separated emails)</label>
+                      <input
+                        className="w-full mt-1 p-3 bg-stone-50 rounded-xl border border-stone-200"
+                        value={profileContacts}
+                        onChange={(e) => setProfileContacts(e.target.value)}
+                        placeholder="e.g. spouse@email.com, friend@email.com"
+                      />
+                    </div>
+
+                    <Button fullWidth onClick={handleSaveProfile} disabled={profileSaving}>
+                      {profileSaving ? "Saving..." : "Save Profile"}
+                    </Button>
+                  </div>
+                </div>
+
                 <div className="bg-white p-4 rounded-2xl shadow-sm border border-stone-100">
                   <h3 className="font-semibold mb-2">My Interests</h3>
                   <div className="flex flex-wrap gap-2">
@@ -578,7 +693,7 @@ const App: React.FC = () => {
                   <Button variant="outline" fullWidth onClick={loadSeedData}>Reset / Seed Data</Button>
                 </div>
 
-                <Button variant="secondary" fullWidth onClick={handleLogout}>Log Out</Button>
+                <LogoutButton />
               </div>
             </div>
           )}
