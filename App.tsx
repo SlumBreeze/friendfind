@@ -5,6 +5,8 @@ import { auth } from './services/firebase';
 import { getMyProfile } from './services/userProfile';
 import { updateMyProfile } from './services/userProfileUpdate';
 import { getDiscoverUsers } from './services/discovery';
+import { swipeUser, subscribeToMatches } from './services/matching';
+import { sendMessage, subscribeToMessages } from './services/chat';
 import { ViewState, User, PotentialFriend, Match, Message, Meetup } from './types';
 import { Button } from './components/Button';
 import {
@@ -12,12 +14,7 @@ import {
   ChevronLeftIcon, CalendarIcon, SendIcon, MapPinIcon
 } from './components/Icons';
 import { generateIcebreakers, composeSafetyMessage } from './services/geminiService';
-import {
-  SEED_MATCHES,
-  SEED_MATCHED_USERS_PROFILES,
-  SEED_MESSAGES,
-  SEED_MEETUPS
-} from './services/seedData';
+import { SEED_MEETUPS } from './services/seedData';
 import AuthGate from './components/AuthGate';
 import LogoutButton from './components/LogoutButton';
 
@@ -52,38 +49,38 @@ const App: React.FC = () => {
   const [profileBio, setProfileBio] = useState("");
   const [profileSaving, setProfileSaving] = useState(false);
 
-  // --- INIT SEED DATA (for matches, messages, etc. - NOT potential friends) ---
+  // --- INIT SEED DATA ---
   const loadSeedData = () => {
-    setMatches(SEED_MATCHES);
-    setMessages(SEED_MESSAGES);
+    // Only seed meetups for now, matches and messages come from Firestore
     setMeetups(SEED_MEETUPS);
-
-    // Index extra profiles for quick lookup
-    const profiles: Record<string, PotentialFriend> = {};
-    SEED_MATCHED_USERS_PROFILES.forEach(p => profiles[p.id] = p);
-    setOtherUserProfiles(profiles);
   };
 
-  // --- LOAD USER PROFILE FROM FIRESTORE ---
+  // --- LOAD USER PROFILE & LISTENER ---
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (fbUser) => {
+    let unsubscribeMatches: () => void;
+
+    const unsubAuth = onAuthStateChanged(auth, async (fbUser) => {
       if (!fbUser) {
         setUser(null);
+        setMatches([]); // Clear matches on logout
         return;
       }
 
+      // 1. Load My Profile
       const profile = await getMyProfile(fbUser.uid, fbUser.email);
 
-      // This shape must match your existing `User` type usage
       setUser({
         id: profile.id,
         name: profile.name,
+        email: fbUser.email || '',
         city: profile.city,
         interests: profile.interests,
         trustedContacts: profile.trustedContacts,
-      } as any);
+        bio: profile.bio,
+        avatar: profile.avatar
+      });
 
-      // Load discovered users from Firestore (same city)
+      // 2. Load Discovery (Potential Friends)
       const discovered = await getDiscoverUsers(fbUser.uid, profile.city);
       setPotentialFriends(
         discovered.map((p) => ({
@@ -91,17 +88,45 @@ const App: React.FC = () => {
           name: p.name,
           city: p.city,
           interests: p.interests,
-          bio: p.bio ?? "No bio yet.",
+          bio: p.bio,
           distance: 0,
           avatar: p.avatar ?? "https://via.placeholder.com/600x800",
-        })) as any
+        }))
       );
 
-      // Load seed data for other parts (matches, messages, etc.)
-      loadSeedData();
+      // 3. LISTEN TO REAL MATCHES
+      unsubscribeMatches = subscribeToMatches(fbUser.uid, async (realMatches) => {
+        setMatches(realMatches);
+
+        // Fetch profiles for people we matched with (so we have their name/avatar)
+        const newProfiles: Record<string, PotentialFriend> = { ...otherUserProfiles };
+
+        for (const m of realMatches) {
+          const otherId = m.users.find(u => u !== fbUser.uid);
+          if (otherId && !newProfiles[otherId]) {
+            // Reuse getMyProfile to fetch other user's data
+            const p = await getMyProfile(otherId, null);
+            newProfiles[otherId] = {
+              id: p.id,
+              name: p.name,
+              city: p.city,
+              interests: p.interests,
+              avatar: p.avatar,
+              bio: p.bio,
+              distance: 0
+            };
+          }
+        }
+        setOtherUserProfiles(newProfiles);
+      });
+
+      loadSeedData(); // Only loads meetups now
     });
 
-    return () => unsub();
+    return () => {
+      unsubAuth();
+      if (unsubscribeMatches) unsubscribeMatches();
+    };
   }, []);
 
   // --- HELPERS ---
@@ -115,9 +140,25 @@ const App: React.FC = () => {
     setProfileCity(user.city ?? "");
     setProfileInterests((user.interests ?? []).join(", "));
     setProfileContacts((user.trustedContacts ?? []).join(", "));
-    setProfileAvatar((user as any).avatar ?? "");
-    setProfileBio((user as any).bio ?? "");
+    // No more (user as any)
+    setProfileAvatar(user.avatar ?? "");
+    setProfileBio(user.bio ?? "");
   }, [user]);
+
+  // --- CHAT LISTENER ---
+  useEffect(() => {
+    if (!activeMatchId) return;
+
+    // Subscribe to messages for this match
+    const unsub = subscribeToMessages(activeMatchId, (newMsgs) => {
+      setMessages(prev => ({
+        ...prev,
+        [activeMatchId]: newMsgs
+      }));
+    });
+
+    return () => unsub();
+  }, [activeMatchId]);
 
   // Save profile handler
   const handleSaveProfile = async () => {
@@ -152,108 +193,51 @@ const App: React.FC = () => {
         trustedContacts,
         avatar: profileAvatar.trim() || undefined,
         bio: profileBio.trim() || undefined,
-      } as any) : prev);
+        // Ensure strictly required fields are preserved
+        email: prev.email
+      }) : prev);
     } finally {
       setProfileSaving(false);
     }
   };
 
-  const handleSwipe = (direction: 'left' | 'right') => {
-    if (potentialFriends.length === 0) return;
+  const handleSwipe = async (direction: 'left' | 'right') => {
+    if (potentialFriends.length === 0 || !user) return;
     const currentProfile = potentialFriends[0];
 
-    if (direction === 'right') {
-      const newMatchId = `match_${Date.now()}`;
-      const newMatch: Match = {
-        id: newMatchId,
-        users: [user!.id, currentProfile.id],
-        timestamp: Date.now(),
-        lastMessage: "You matched! Say hi 👋",
-        lastMessageTime: Date.now(),
-      };
-
-      setMatches(prev => [newMatch, ...prev]);
-
-      // Add profile to lookup
-      setOtherUserProfiles(prev => ({ ...prev, [currentProfile.id]: currentProfile }));
-
-      // Initialize empty messages
-      setMessages(prev => ({
-        ...prev,
-        [newMatchId]: [{
-          id: `sys_${Date.now()}`,
-          matchId: newMatchId,
-          senderId: 'system',
-          text: `You matched with ${currentProfile.name}!`,
-          timestamp: Date.now(),
-          isSystem: true
-        }]
-      }));
-
-      // Trigger icebreaker generation in background
-      generateIcebreakers(user!.interests, currentProfile.interests).then(breakers => {
-        setMessages(prev => ({
-          ...prev,
-          [newMatchId]: [...(prev[newMatchId] || []), {
-            id: 'sys_ice_' + Date.now(),
-            matchId: newMatchId,
-            senderId: 'system',
-            text: `💡 Icebreaker ideas: \n${breakers.map(b => "• " + b).join('\n')}`,
-            timestamp: Date.now() + 100,
-            isSystem: true
-          }]
-        }));
-      });
-    }
-
-    // Remove top card
+    // Remove top card immediately for UI responsiveness
     setPotentialFriends(prev => prev.slice(1));
+
+    try {
+      // Call the service
+      const match = await swipeUser(user.id, currentProfile, direction);
+
+      if (match) {
+        // It's a match! The snapshot listener will update 'matches', 
+        // but we can show a localized alert or effect here.
+        alert(`It's a match with ${currentProfile.name}!`);
+
+        // Add basic system message for the new match
+        await sendMessage(match.id, 'system', `You matched with ${currentProfile.name}!`);
+      }
+    } catch (error) {
+      console.error("Swipe failed:", error);
+    }
   };
 
-  const handleSendMessage = () => {
-    if (!inputMsg.trim() || !activeMatchId) return;
+  const handleSendMessage = async () => {
+    if (!inputMsg.trim() || !activeMatchId || !user) return;
 
-    const newMessage: Message = {
-      id: `msg_${Date.now()}`,
-      matchId: activeMatchId,
-      senderId: user!.id,
-      text: inputMsg,
-      timestamp: Date.now()
-    };
+    const textToSend = inputMsg;
+    setInputMsg(''); // Clear input immediately
 
-    setMessages(prev => ({
-      ...prev,
-      [activeMatchId]: [...(prev[activeMatchId] || []), newMessage]
-    }));
-
-    // Update match last message
-    setMatches(prev => prev.map(m =>
-      m.id === activeMatchId
-        ? { ...m, lastMessage: inputMsg, lastMessageTime: Date.now() }
-        : m
-    ));
-
-    setInputMsg('');
-
-    // Simulate reply from "Gemini" or Bot
-    setTimeout(() => {
-      const reply: Message = {
-        id: `msg_${Date.now()}_reply`,
-        matchId: activeMatchId,
-        senderId: 'other',
-        text: "That sounds awesome! I'd love to hear more about it.",
-        timestamp: Date.now()
-      };
-      setMessages(prev => ({
-        ...prev,
-        [activeMatchId]: [...(prev[activeMatchId] || []), reply]
-      }));
-      setMatches(prev => prev.map(m =>
-        m.id === activeMatchId
-          ? { ...m, lastMessage: reply.text, lastMessageTime: Date.now() }
-          : m
-      ));
-    }, 2000);
+    try {
+      await sendMessage(activeMatchId, user.id, textToSend);
+      // No need to setMessages manually; the subscription will do it.
+    } catch (error) {
+      console.error("Error sending message:", error);
+      alert("Failed to send message");
+    }
   };
 
   const handleCreateMeetup = (e: React.FormEvent) => {
@@ -639,9 +623,10 @@ const App: React.FC = () => {
           {view === ViewState.PROFILE && (
             <div className="p-6">
               <div className="flex flex-col items-center mb-8">
-                {(user as any)?.avatar ? (
+                {/* Remove (user as any) */}
+                {user?.avatar ? (
                   <img
-                    src={(user as any).avatar}
+                    src={user.avatar}
                     alt="Profile"
                     className="w-24 h-24 rounded-full object-cover border-4 border-white shadow-lg mb-4"
                   />
@@ -652,8 +637,9 @@ const App: React.FC = () => {
                 )}
                 <h2 className="text-2xl font-bold text-stone-900">{auth.currentUser?.email ?? "Anonymous"}</h2>
                 <p className="text-stone-500">{user?.city ?? "Your City"}</p>
-                {(user as any)?.bio && (
-                  <p className="text-stone-600 text-sm text-center mt-2 max-w-xs">{(user as any).bio}</p>
+                {/* Remove (user as any) */}
+                {user?.bio && (
+                  <p className="text-stone-600 text-sm text-center mt-2 max-w-xs">{user.bio}</p>
                 )}
               </div>
 

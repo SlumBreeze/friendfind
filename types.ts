@@ -14,11 +14,12 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  bio: string;
   city: string;
-  avatar: string;
   interests: string[];
   trustedContacts: string[]; // List of email addresses
+  // Make these optional because new users might not have them yet
+  bio?: string;
+  avatar?: string;
 }
 
 // Collection: "matches"
@@ -55,6 +56,7 @@ export interface Meetup {
 }
 
 // Client-side only extension for Discovery View
-export interface PotentialFriend extends User {
+// We use Omit to exclude private fields (email, contacts) that shouldn't be on public cards
+export interface PotentialFriend extends Omit<User, 'email' | 'trustedContacts'> {
   distance: number; // Calculated on client or via Cloud Function
 }
