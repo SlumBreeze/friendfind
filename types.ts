@@ -30,6 +30,7 @@ export interface Match {
   timestamp: number; // Created At
   lastMessage?: string;
   lastMessageTime?: number; // Used for sorting matches list
+  lastRead?: Record<string, number>; // { [userId]: timestamp } - Last time user read the chat
 }
 
 // Subcollection: "matches/{matchId}/messages"

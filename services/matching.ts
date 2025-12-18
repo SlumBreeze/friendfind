@@ -64,10 +64,7 @@ export function subscribeToMatches(myUid: string, onUpdate: (matches: Match[]) =
             const data = doc.data();
             return {
                 id: doc.id,
-                users: data.users,
-                timestamp: data.timestamp,
-                lastMessage: data.lastMessage,
-                lastMessageTime: data.lastMessageTime
+                ...data
             } as Match;
         });
         // Sort by newest message first
