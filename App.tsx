@@ -9,6 +9,7 @@ import { swipeUser, subscribeToMatches } from './services/matching';
 import { sendMessage, subscribeToMessages, markChatAsRead } from './services/chat';
 import { createMeetup, subscribeToMeetups, updateMeetupStatus } from './services/meetups';
 import { blockUser, unmatchUser, getBlockedUserIds } from './services/blocking';
+import { reportUser, ReportReason } from './services/reporting';
 import { ViewState, User, PotentialFriend, Match, Message, Meetup } from './types';
 import { Button } from './components/Button';
 import {
@@ -53,8 +54,11 @@ const App: React.FC = () => {
   // Blocking & Safety UI State
   const [blockedUserIds, setBlockedUserIds] = useState<Set<string>>(new Set());
   const [showSafetyOptions, setShowSafetyOptions] = useState(false); // Dropdown in chat
-  const [showBlockConfirm, setShowBlockConfirm] = useState(false);
   const [showUnmatchConfirm, setShowUnmatchConfirm] = useState(false);
+  const [showBlockConfirm, setShowBlockConfirm] = useState(false);
+  const [reportReason, setReportReason] = useState<ReportReason | null>(null);
+  const [showFriendshipModal, setShowFriendshipModal] = useState(false);
+  const [filterInterest, setFilterInterest] = useState<string | null>(null);
 
   // --- INIT DATA ---
   // Note: Meetups now come from Firestore via subscribeToMeetups, no seed data needed
@@ -234,12 +238,11 @@ const App: React.FC = () => {
     }
   };
 
-  const handleSwipe = async (direction: 'left' | 'right') => {
-    if (potentialFriends.length === 0 || !user) return;
-    const currentProfile = potentialFriends[0];
+  const handleSwipe = async (direction: 'left' | 'right', currentProfile: PotentialFriend) => {
+    if (!user) return;
 
     // Remove top card immediately for UI responsiveness
-    setPotentialFriends(prev => prev.slice(1));
+    setPotentialFriends(prev => prev.filter(p => p.id !== currentProfile.id));
 
     try {
       // Call the service
@@ -342,6 +345,12 @@ const App: React.FC = () => {
       const otherUid = match?.users.find(uid => uid !== user.id);
 
       if (otherUid) {
+        // 1. Report if reason selected
+        if (reportReason) {
+          await reportUser(user.id, otherUid, reportReason);
+        }
+
+        // 2. Block
         await blockUser(user.id, otherUid, activeMatchId);
         // Update local block list immediately
         setBlockedUserIds(prev => new Set(prev).add(otherUid));
@@ -350,6 +359,7 @@ const App: React.FC = () => {
       setActiveMatchId(null);
       setView(ViewState.MATCHES);
       setShowBlockConfirm(false);
+      setReportReason(null); // Reset
     } catch (e) {
       console.error("Block failed:", e);
       alert("Failed to block. Please try again.");
@@ -379,71 +389,114 @@ const App: React.FC = () => {
 
         {/* VIEW CONTENT */}
         <main className="h-full">
-          {view === ViewState.DISCOVER && (
-            <div className="p-4 h-[calc(100vh-140px)] flex flex-col relative">
-              {potentialFriends.length > 0 ? (
-                <div className="flex-1 relative w-full h-full">
-                  {/* BACKGROUND CARDS */}
-                  {potentialFriends.length > 1 && (
-                    <div className="absolute top-4 left-0 w-full h-full bg-white rounded-3xl shadow-sm scale-95 opacity-50 z-0"></div>
-                  )}
+          {view === ViewState.DISCOVER && (() => {
+            // Computed Data for Filters
+            const allInterests = Array.from(new Set(potentialFriends.flatMap(p => p.interests || []))).sort();
+            const displayedFriends = potentialFriends.filter(p => !filterInterest || p.interests.includes(filterInterest));
+            const activeCard = displayedFriends[0];
 
-                  {/* ACTIVE CARD */}
-                  <div className="absolute top-0 left-0 w-full h-full bg-white rounded-3xl shadow-xl overflow-hidden z-10 flex flex-col">
-                    <div className="h-3/5 relative">
-                      <img
-                        src={potentialFriends[0].avatar}
-                        alt={potentialFriends[0].name}
-                        className="w-full h-full object-cover"
-                      />
-                      <div className="absolute bottom-0 left-0 w-full bg-gradient-to-t from-black/60 to-transparent p-4 pt-12">
-                        <h2 className="text-white text-3xl font-bold">{potentialFriends[0].name}</h2>
-                        <div className="flex items-center text-white/90 text-sm mt-1">
-                          <MapPinIcon className="w-4 h-4 mr-1" />
-                          {potentialFriends[0].city} • {potentialFriends[0].distance}km away
+            return (
+              <div className="p-4 h-[calc(100vh-140px)] flex flex-col relative w-full">
+                {/* INTEREST FILTER BAR */}
+                <div className="flex gap-2 overflow-x-auto pb-4 scrollbar-hide mb-2">
+                  <button
+                    onClick={() => setFilterInterest(null)}
+                    className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${!filterInterest
+                      ? 'bg-stone-900 text-white'
+                      : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-50'
+                      }`}
+                  >
+                    All
+                  </button>
+                  {allInterests.map(interest => (
+                    <button
+                      key={interest}
+                      onClick={() => setFilterInterest(interest === filterInterest ? null : interest)}
+                      className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${filterInterest === interest
+                        ? 'bg-primary-500 text-stone-900'
+                        : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-50'
+                        }`}
+                    >
+                      {interest}
+                    </button>
+                  ))}
+                </div>
+
+                {displayedFriends.length > 0 && activeCard ? (
+                  <div className="flex-1 relative w-full overflow-hidden">
+                    {/* BACKGROUND CARDS */}
+                    {displayedFriends.length > 1 && (
+                      <div className="absolute top-4 left-0 w-full h-full bg-white rounded-3xl shadow-sm scale-95 opacity-50 z-0"></div>
+                    )}
+
+                    {/* ACTIVE CARD */}
+                    <div className="absolute top-0 left-0 w-full h-full bg-white rounded-3xl shadow-xl overflow-hidden z-10 flex flex-col">
+                      <div className="h-3/5 relative">
+                        <img
+                          src={activeCard.avatar}
+                          alt={activeCard.name}
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute bottom-0 left-0 w-full bg-gradient-to-t from-black/60 to-transparent p-4 pt-12">
+                          <h2 className="text-white text-3xl font-bold">{activeCard.name}</h2>
+                          <div className="flex items-center text-white/90 text-sm mt-1">
+                            <MapPinIcon className="w-4 h-4 mr-1" />
+                            {activeCard.city} • {activeCard.distance}km away
+                          </div>
+                        </div>
+                      </div>
+                      <div className="p-5 flex-1 flex flex-col">
+                        <div className="flex flex-wrap gap-2 mb-4">
+                          {activeCard.interests.map(tag => (
+                            <span key={tag} className="px-3 py-1 bg-stone-100 text-stone-600 text-xs rounded-full font-medium">
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                        <p className="text-stone-600 leading-relaxed text-sm mb-4 line-clamp-3">
+                          {activeCard.bio}
+                        </p>
+
+                        <div className="mt-auto grid grid-cols-2 gap-4">
+                          <button
+                            onClick={() => handleSwipe('left', activeCard)}
+                            className="flex items-center justify-center py-4 rounded-2xl border-2 border-stone-200 text-stone-400 hover:bg-stone-50 hover:border-stone-300 transition-colors"
+                          >
+                            <XIcon className="w-8 h-8" />
+                          </button>
+                          <button
+                            onClick={() => handleSwipe('right', activeCard)}
+                            className="flex items-center justify-center py-4 rounded-2xl bg-accent-500 text-white hover:bg-accent-600 shadow-lg shadow-accent-500/30 transition-colors"
+                          >
+                            <HeartIcon className="w-8 h-8" fill="currentColor" />
+                          </button>
                         </div>
                       </div>
                     </div>
-                    <div className="p-5 flex-1 flex flex-col">
-                      <div className="flex flex-wrap gap-2 mb-4">
-                        {potentialFriends[0].interests.map(tag => (
-                          <span key={tag} className="px-3 py-1 bg-stone-100 text-stone-600 text-xs rounded-full font-medium">
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                      <p className="text-stone-600 leading-relaxed text-sm mb-4 line-clamp-3">
-                        {potentialFriends[0].bio}
-                      </p>
+                  </div>
 
-                      <div className="mt-auto grid grid-cols-2 gap-4">
-                        <button
-                          onClick={() => handleSwipe('left')}
-                          className="flex items-center justify-center py-4 rounded-2xl border-2 border-stone-200 text-stone-400 hover:bg-stone-50 hover:border-stone-300 transition-colors"
-                        >
-                          <XIcon className="w-8 h-8" />
-                        </button>
-                        <button
-                          onClick={() => handleSwipe('right')}
-                          className="flex items-center justify-center py-4 rounded-2xl bg-accent-500 text-white hover:bg-accent-600 shadow-lg shadow-accent-500/30 transition-colors"
-                        >
-                          <HeartIcon className="w-8 h-8" fill="currentColor" />
-                        </button>
-                      </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full text-center text-stone-500">
+                    <div className="w-20 h-20 bg-stone-200 rounded-full flex items-center justify-center mb-4">
+                      <CompassIcon className="w-10 h-10 text-stone-400" />
                     </div>
+                    <h3 className="text-lg font-semibold text-stone-800">No more profiles</h3>
+                    <p className="max-w-[200px]">
+                      {filterInterest ? `No one likes "${filterInterest}" yet.` : "Check back later for more potential friends nearby!"}
+                    </p>
+                    {filterInterest && (
+                      <button
+                        onClick={() => setFilterInterest(null)}
+                        className="mt-4 px-4 py-2 bg-stone-100 text-stone-600 rounded-xl text-sm font-medium"
+                      >
+                        Clear Filter
+                      </button>
+                    )}
                   </div>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center h-full text-center text-stone-500">
-                  <div className="w-20 h-20 bg-stone-200 rounded-full flex items-center justify-center mb-4">
-                    <CompassIcon className="w-10 h-10 text-stone-400" />
-                  </div>
-                  <h3 className="text-lg font-semibold text-stone-800">No more profiles</h3>
-                  <p className="max-w-[200px]">Check back later for more potential friends nearby!</p>
-                </div>
-              )}
-            </div>
-          )}
+                )}
+              </div>
+            );
+          })()}
 
           {view === ViewState.MATCHES && (
             <div className="p-4">
@@ -536,6 +589,12 @@ const App: React.FC = () => {
                             className="w-full text-left px-4 py-3 text-stone-700 hover:bg-stone-50 text-sm font-medium flex items-center gap-2"
                           >
                             <XIcon className="w-4 h-4" /> Unmatch
+                          </button>
+                          <button
+                            onClick={() => { setShowFriendshipModal(true); setShowSafetyOptions(false); }}
+                            className="w-full text-left px-4 py-3 text-stone-700 hover:bg-stone-50 text-sm font-medium flex items-center gap-2 border-t border-stone-50"
+                          >
+                            <CalendarIcon className="w-4 h-4" /> View Friendship
                           </button>
                           <button
                             onClick={() => { setShowBlockConfirm(true); setShowSafetyOptions(false); }}
@@ -944,18 +1003,117 @@ const App: React.FC = () => {
           showBlockConfirm && (
             <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
               <div className="bg-white rounded-2xl p-6 w-full max-w-sm">
-                <h3 className="text-xl font-bold text-stone-900 mb-2">Block User?</h3>
-                <p className="text-stone-600 mb-6">They won't be able to see you or contact you again. This will also unmatch you.</p>
+                <h3 className="text-xl font-bold text-stone-900 mb-2">Block & Report</h3>
+                <p className="text-stone-600 mb-4 text-sm">Select a reason to report this user. They will be blocked immediately.</p>
+
+                <div className="space-y-2 mb-6">
+                  {(['spam', 'harassment', 'inappropriate', 'other'] as ReportReason[]).map(r => (
+                    <button
+                      key={r}
+                      onClick={() => setReportReason(r)}
+                      className={`w-full text-left px-4 py-3 rounded-xl border ${reportReason === r
+                        ? 'border-red-500 bg-red-50 text-red-700 font-medium'
+                        : 'border-stone-200 text-stone-600 hover:bg-stone-50'
+                        } transition-colors capitalize`}
+                    >
+                      {r}
+                    </button>
+                  ))}
+                </div>
+
                 <div className="flex gap-3">
-                  <Button variant="outline" fullWidth onClick={() => setShowBlockConfirm(false)}>Cancel</Button>
-                  <Button fullWidth onClick={handleBlock} className="bg-red-500 hover:bg-red-600 text-white border-none">Block User</Button>
+                  <Button variant="outline" fullWidth onClick={() => { setShowBlockConfirm(false); setReportReason(null); }}>Cancel</Button>
+                  <Button
+                    fullWidth
+                    onClick={handleBlock}
+                    className={`border-none text-white ${reportReason ? 'bg-red-500 hover:bg-red-600' : 'bg-stone-400 cursor-not-allowed'}`}
+                    disabled={!reportReason}
+                  >
+                    Report & Block
+                  </Button>
                 </div>
               </div>
             </div>
           )
         }
+
+        {/* FRIENDSHIP TIMELINE MODAL */}
+        {
+          showFriendshipModal && activeMatchId && (() => {
+            const match = matches.find(m => m.id === activeMatchId);
+            const ms = meetups[activeMatchId] || [];
+            const completedMeetups = ms.filter(m => m.status === 'completed');
+
+            // Format dates
+            const matchDate = match ? new Date(match.timestamp) : new Date();
+            const daysFriends = Math.floor((Date.now() - matchDate.getTime()) / (1000 * 60 * 60 * 24));
+
+            return (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+                <div className="bg-white rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+                  <div className="bg-gradient-to-br from-primary-400 to-primary-500 p-6 text-center relative overflow-hidden">
+                    <div className="absolute top-0 left-0 w-full h-full bg-white/10 opacity-50 z-0"></div>
+                    <button
+                      onClick={() => setShowFriendshipModal(false)}
+                      className="absolute top-4 right-4 p-2 bg-black/10 hover:bg-black/20 rounded-full text-white/80 transition-colors z-50"
+                    >
+                      <XIcon className="w-5 h-5" />
+                    </button>
+
+                    <div className="relative z-10">
+                      <div className="w-16 h-16 bg-white/20 backdrop-blur-md rounded-2xl mx-auto flex items-center justify-center mb-3 shadow-lg">
+                        <HeartIcon className="w-8 h-8 text-white" fill="currentColor" />
+                      </div>
+                      <h3 className="text-2xl font-bold text-stone-900">Friendship History</h3>
+                      <p className="text-stone-800 font-medium opacity-80 mt-1">Friends for {daysFriends} day{daysFriends !== 1 ? 's' : ''}</p>
+                    </div>
+                  </div>
+
+                  <div className="p-6 max-h-[60vh] overflow-y-auto">
+                    <div className="relative pl-8 border-l-2 border-stone-100 space-y-8">
+                      {/* Match Event */}
+                      <div className="relative">
+                        <div className="absolute -left-[39px] top-1 w-5 h-5 rounded-full bg-primary-400 border-4 border-white shadow-sm flex items-center justify-center">
+                        </div>
+                        <div>
+                          <span className="text-xs font-bold text-primary-600 uppercase tracking-wider">It's a Match!</span>
+                          <h4 className="font-bold text-stone-900 mt-1">You connected</h4>
+                          <span className="text-xs text-stone-400 font-medium">
+                            {matchDate.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Completed Meetups */}
+                      {completedMeetups.map(meetup => (
+                        <div key={meetup.id} className="relative">
+                          <div className="absolute -left-[39px] top-1 w-5 h-5 rounded-full bg-accent-400 border-4 border-white shadow-sm"></div>
+                          <div>
+                            <span className="text-xs font-bold text-accent-600 uppercase tracking-wider">Meetup Completed</span>
+                            <h4 className="font-bold text-stone-900 mt-1">{meetup.place}</h4>
+                            <span className="text-xs text-stone-400 font-medium">
+                              {new Date(meetup.time).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} • {new Date(meetup.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+
+                      <div className="relative">
+                        <div className="absolute -left-[39px] top-1 w-5 h-5 rounded-full bg-stone-200 border-4 border-white shadow-sm"></div>
+                        <div>
+                          <h4 className="font-medium text-stone-500 mt-1">Present Day</h4>
+                        </div>
+                      </div>
+
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()
+        }
       </div >
-    </AuthGate>
+    </AuthGate >
   );
 };
 
